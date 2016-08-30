@@ -324,8 +324,18 @@ public class Solution {
     public class SubOrder {
         ArrayList<CookableObject> subItems;
         OrderStatus status;
+        long beginTime;
+        
+        
+        public long getBeginTime() {
+			return beginTime;
+		}
 
-        public ArrayList<CookableObject> getSubItems() {
+		public void setBeginTime(long beginTime) {
+			this.beginTime = beginTime;
+		}
+
+		public ArrayList<CookableObject> getSubItems() {
             return subItems;
         }
 
@@ -343,17 +353,21 @@ public class Solution {
 
         @Override
         public String toString() {
-
+        	
         }
     }
 
     abstract class Fryer {
-        public boolean isRunning = false;
+        public boolean isRunning;
 
         public void start() {
             this.isRunning = true;
         }
 
+        Fryer() {
+        	this.isRunning = true;
+        }
+        
         public abstract void fry(ArrayList<CookableObject> itemList);
 
         public void stop() {
