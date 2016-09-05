@@ -204,6 +204,7 @@ public class Solution {
         
         int itemCnt = 0;
     	int chipDuration = 0, fishDuration = 0;
+        boolean isServed = false;
 
         public synchronized void decreItemCnt() {
         	this.itemCnt--;
@@ -620,6 +621,9 @@ public class Solution {
         
         public void stop() {
             this.isRunning = false;
+            synchronized (lck) {
+                this.lck.notify();
+            }
         }
         
         public void waitFinish() {
@@ -639,21 +643,20 @@ public class Solution {
         
         @Override
         public void run() {
-        	
-        	synchronized (lck) {
-				try {
-					lck.wait();
-				} catch (InterruptedException e) {
-					e.printStackTrace();
-				}
-			}
+
             while (this.isRunning) {
 
+                synchronized (lck) {
+                    try {
+                        lck.wait();
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
                 while (this.orderList.size() > 0) {
                     SubOrder subOrder = orderList.poll();
-                    
-                    
-                    if (canProcessOrder(subOrder.getSubItems().size())) {
+
+                    if (subOrder != null && canProcessOrder(subOrder.getSubItems().size())) {
                     	try {
                     		Thread.sleep(subOrder.delayTime);
 	                    System.out.println(subOrder.toString());
@@ -849,7 +852,6 @@ public class Solution {
         
         void stop() {
         	isRunning = false;
-        	System.out.println("Processor : stop running ");
         	try {
         		chipFryer.stop();
         		fishFryer.stop();
@@ -878,7 +880,7 @@ public class Solution {
 	                    synchronized (processingOrder) {
 	                    	while (processingOrder != null && processingOrder.getItemCnt() > 0) {
 	                    		try {
-	    							processingOrder.wait(1000);
+	    							processingOrder.wait();
 	    						} catch (InterruptedException e) {
 	    							// TODO Auto-generated catch block
 	    							e.printStackTrace();
@@ -890,7 +892,10 @@ public class Solution {
 
                 	
                 	if (processingOrder != null) {
-                    	System.out.println("at " + processingOrder.getServeTime().toString() + ", Serve Order #" + String.valueOf(processingOrder.orderNo));
+                        if (!processingOrder.isServed) {
+                            processingOrder.isServed = true;
+                            System.out.println("at " + processingOrder.getServeTime().toString() + ", Serve Order #" + String.valueOf(processingOrder.orderNo));
+                        }
                     	if (shouldRejected(curOrder, processingOrder)) {
                         	System.out.println("at " + curOrder.getOrderTime().toString() + ", " + 
                         "Order #" + String.valueOf(curOrder.getOrderNo()) +" rejected");
@@ -907,7 +912,7 @@ public class Solution {
                 	
                 	ArrayList<SubOrder> chipsOrders = processingOrder.getItemList().containsKey(FryerType.CHIPSFRYER) ? processingOrder.getItemList().get(FryerType.CHIPSFRYER) : new ArrayList<SubOrder>();
                 	ArrayList<SubOrder> fishOrders = processingOrder.getItemList().containsKey(FryerType.FISHFRYER) ? processingOrder.getItemList().get(FryerType.FISHFRYER) : new ArrayList<SubOrder>();
-                	
+
                 	if (chipsOrders.size() > 0) {
                 		this.chipFryer.addSubOrder(chipsOrders);
                 	}
@@ -927,7 +932,7 @@ public class Solution {
 				delayTime = processingOrder.getServeTime().toValue() - curOrder.getOrderTime().toValue();
 			}
 			
-			return (curOrder.getServeTime().toValue() - curOrder.getOrderTime().toValue() + delayTime) > orderTimeLimits;
+			return (curOrder.getServeTime().toValue() - curOrder.getOrderTime().toValue()) > orderTimeLimits;
 		}
     }
     
@@ -1032,9 +1037,11 @@ public class Solution {
     	String order11 = "Order #8, 12:08:00, 8 Chips";
 
 
-    	
-    	List<String> strList = new ArrayList<String>();
 
+    	List<String> strList = new ArrayList<String>();
+//        strList.add(order1);
+//        strList.add(order2);
+//        strList.add(order3);
     	strList.add(order4);
     	strList.add(order5);
     	strList.add(order6);
@@ -1043,7 +1050,7 @@ public class Solution {
     	strList.add(order9);
     	strList.add(order10);
     	strList.add(order11);
-    	
+
     	Solution solut = new Solution();
     	Processor processor = solut.new Processor();
     	Thread t = new Thread(processor);
@@ -1056,21 +1063,21 @@ public class Solution {
     	
 //    	Solution solut = new Solution();
 //    	Processor processor = solut.new Processor();
-//    	
+//
 //    	Thread t = new Thread(processor);
 //    	t.start();
-//    	
-//    	
-//    	
-//    	while (true) {
-//    		BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-//    		String s = reader.readLine();
-//    		processor.addQueue(s);
-//    	}
+//        processor.start();
+//
+//
+//        BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+//        String s;
+//        while ((s = reader.readLine()) != null) {
+//            processor.addQueue(s);
+//        }
     	
-    	Thread.sleep(100000);
-//    	processor.stop();
-//    	t.join();
+    	Thread.sleep(10000);
+    	processor.stop();
+    	t.join();
     	
     	
     }
