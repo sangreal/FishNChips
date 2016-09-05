@@ -203,7 +203,8 @@ public class Solution {
         int orderNo;
         
         int itemCnt = 0;
-        
+    	int chipDuration = 0, fishDuration = 0;
+
         public synchronized void decreItemCnt() {
         	this.itemCnt--;
         }
@@ -234,7 +235,7 @@ public class Solution {
         	createSubOrders(subOrderMap);
         	calcDuaration();
         	calcServeTime(duration);
-			
+			adjustStartTime();
         	ArrayList<SubOrder> subOrderChipsList = this.itemList.containsKey(FryerType.CHIPSFRYER) ? this.itemList.get(FryerType.CHIPSFRYER) : new ArrayList<SubOrder>();
         	ArrayList<SubOrder> subOrderFishsList = this.itemList.containsKey(FryerType.FISHFRYER) ? this.itemList.get(FryerType.FISHFRYER) : new ArrayList<SubOrder>();
 			this.itemCnt = subOrderChipsList.size() + subOrderFishsList.size();
@@ -285,6 +286,7 @@ public class Solution {
         public TimeStamp getServeTime() {
         	return this.serveTime;
         }
+        
         
         private void createSubOrders(HashMap<String, Integer> subOrderMap) {
 
@@ -443,7 +445,6 @@ public class Solution {
         }
         
         void calcDuaration() {
-        	int chipDuration = 0, fishDuration = 0;
         	ArrayList<SubOrder> subOrderChipsList = this.itemList.containsKey(FryerType.CHIPSFRYER) ? this.itemList.get(FryerType.CHIPSFRYER) : new ArrayList<SubOrder>();
         	ArrayList<SubOrder> subOrderFishsList = this.itemList.containsKey(FryerType.FISHFRYER) ? this.itemList.get(FryerType.FISHFRYER) : new ArrayList<SubOrder>();
         	for (SubOrder subOrder : subOrderChipsList) {
@@ -461,6 +462,21 @@ public class Solution {
 			this.serveTime = new TimeStamp(startTime == null ? orderTime : startTime);
 			this.serveTime.increment(duration);        	
         }
+        
+        void adjustStartTime() {
+        	FryerType adjustFryType = (this.chipDuration != this.duration ? FryerType.CHIPSFRYER : FryerType.FISHFRYER);
+        	int increment = (adjustFryType == FryerType.CHIPSFRYER ? this.duration - this.chipDuration : this.duration - this.fishDuration );
+        	
+        	if (this.getItemList().containsKey(adjustFryType)) {
+        		ArrayList<SubOrder> subArr = this.getItemList().get(adjustFryType);
+	        	for (int i = 0; i < subArr.size(); i++) {
+	        		if (i == 0) {
+	        			subArr.get(i).delayTime = increment;
+	        		}
+	        		subArr.get(i).beginTime.increment(increment);
+	        	}
+        	}
+        }
     }
 
     public class SubOrder {
@@ -469,7 +485,7 @@ public class Solution {
         TimeStamp beginTime;
         Order order;
         FryerType fryerType;
-        
+        int delayTime = 0;
         
         public SubOrder(Order order, TimeStamp beginTime, FryerType fryerType) {
         	this.order = order;
@@ -560,12 +576,13 @@ public class Solution {
         }
     }
 
-    abstract class Fryer implements Runnable{
+    public abstract class Fryer implements Runnable{
         public boolean isRunning;
         Queue<SubOrder> orderList = new LinkedList<SubOrder>();
-
-        protected List<Thread> threadList;
+        public Object lck = new Object();
         
+        protected List<Thread> threadList;
+        int prevOrderNo = 0;
         
         public void start() {
 //            this.isRunning = true;
@@ -590,10 +607,15 @@ public class Solution {
         public abstract void constructThreadList(SubOrder subOrder);
         
         public abstract void fry(ArrayList<CookableObject> itemList);
+        
         public void addSubOrder(ArrayList<SubOrder> subOrders) {
         	for (SubOrder order : subOrders) {
         		this.orderList.add(order);
         	}
+        	
+        	synchronized (lck) {
+            	lck.notify();
+			}
         } 
         
         public void stop() {
@@ -617,15 +639,40 @@ public class Solution {
         
         @Override
         public void run() {
+        	
+        	synchronized (lck) {
+				try {
+					lck.wait();
+				} catch (InterruptedException e) {
+					e.printStackTrace();
+				}
+			}
             while (this.isRunning) {
-                while (orderList.size() > 0 && canProcessOrder(orderList.size())) {
+
+                while (this.orderList.size() > 0) {
                     SubOrder subOrder = orderList.poll();
-                    System.out.println(subOrder.toString());
-                    fry(subOrder.getSubItems());
-                    subOrder.order.decreItemCnt();
+                    
+                    
+                    if (canProcessOrder(subOrder.getSubItems().size())) {
+                    	try {
+                    		Thread.sleep(subOrder.delayTime);
+	                    System.out.println(subOrder.toString());
+	                    fry(subOrder.getSubItems());
+	                    subOrder.order.decreItemCnt();
+                    	
+							Thread.sleep(subOrder.getDuration());
+						} catch (InterruptedException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						}
+	                	synchronized (subOrder.order) {
+	                		if (subOrder.order.getItemCnt() == 0) {
+	                        	subOrder.order.notify();
+							}
+	                    }
+                    }
                 }
             }
-        	System.out.println("isRunning : " + isRunning);
 
         }
     }
@@ -634,10 +681,10 @@ public class Solution {
         public static final int totalStoveNum = 4;
         int curAvailableStoveNum = 4;
 
-        ExecutorService service;
+//        ExecutorService service;
 
         FishFryer () {
-            service = Executors.newFixedThreadPool(totalStoveNum);
+//            service = Executors.newFixedThreadPool(totalStoveNum);
         }
 
         public synchronized int getCurAvailableStoveNum() {
@@ -727,11 +774,6 @@ public class Solution {
         @Override
         public void fry(ArrayList<CookableObject> itemList) {
             setInUse(true);
-            synchronized (System.out) {
-            	System.out.println("test chip fry");
-            	System.out.flush();
-            }
-
 
             for (CookableObject obj : itemList) {
                 obj.cook();
@@ -790,21 +832,19 @@ public class Solution {
             fishFryer = new FishFryer();
             chipThread = new Thread(chipFryer);
             fishThread = new Thread(fishFryer);
-            chipThread.start();
-            fishThread.start();
+
             orderQueue = new LinkedList<Order>();
             orderStrList = new LinkedList<String>();
-
-            
+           
             orderParser = new OrderParser();
+            
         }
 
         void start() {
             isRunning = true;
-            
-
             processingOrder = null;
-
+            chipThread.start();
+            fishThread.start();
         }
         
         void stop() {
@@ -820,9 +860,6 @@ public class Solution {
 			}
         }
         
-        void addQueue(Order order) {
-        	orderQueue.add(order);
-        }
 
         void addQueue(String rawStr) {
         	orderStrList.add(rawStr);
@@ -835,20 +872,22 @@ public class Solution {
                 while (orderStrList.size() > 0) {
                     String curOrderStr = orderStrList.peek();
                     
-                    System.out.println("curOrderStr is : " + curOrderStr);
                     Order curOrder = orderParser.parser(curOrderStr, processingOrder); 
                     
-                 
-                	while (processingOrder != null && processingOrder.getItemCnt() > 0) {
-                		try {
-							Thread.sleep(1000);
-						} catch (InterruptedException e) {
-							// TODO Auto-generated catch block
-							e.printStackTrace();
+                    if (processingOrder != null) {
+	                    synchronized (processingOrder) {
+	                    	while (processingOrder != null && processingOrder.getItemCnt() > 0) {
+	                    		try {
+	    							processingOrder.wait(1000);
+	    						} catch (InterruptedException e) {
+	    							// TODO Auto-generated catch block
+	    							e.printStackTrace();
+	    						}
+	                    		
+	                    	}		
 						}
-                		System.out.println("waiting....");
-                		System.out.println("getItemCnt : " + processingOrder.getItemCnt());
-                	}
+                    }
+
                 	
                 	if (processingOrder != null) {
                     	System.out.println("at " + processingOrder.getServeTime().toString() + ", Serve Order #" + String.valueOf(processingOrder.orderNo));
@@ -868,9 +907,6 @@ public class Solution {
                 	
                 	ArrayList<SubOrder> chipsOrders = processingOrder.getItemList().containsKey(FryerType.CHIPSFRYER) ? processingOrder.getItemList().get(FryerType.CHIPSFRYER) : new ArrayList<SubOrder>();
                 	ArrayList<SubOrder> fishOrders = processingOrder.getItemList().containsKey(FryerType.FISHFRYER) ? processingOrder.getItemList().get(FryerType.FISHFRYER) : new ArrayList<SubOrder>();
-                	
-                	System.out.println("the size of chipsOrders : " + chipsOrders.size());
-                	System.out.println("the size of fishOrders : " + fishOrders.size());
                 	
                 	if (chipsOrders.size() > 0) {
                 		this.chipFryer.addSubOrder(chipsOrders);
@@ -920,7 +956,7 @@ public class Solution {
     			subOrderMap.put(foodStr, cnt);
     		}
     		
-    		TimeStamp serveTime = processingOrder != null ? processingOrder.getServeTime() : null;
+    		TimeStamp serveTime = processingOrder != null ? processingOrder.getServeTime() : timeStamp;
     		Order order = new Order(orderNo, timeStamp, serveTime, subOrderMap);
     		return order;
     	}
@@ -986,13 +1022,27 @@ public class Solution {
     	String order1 = "Order #1, 12:00:00, 2 Cod, 4 Haddock, 3 Chips";
     	String order2 = "Order #2, 12:00:30, 1 Haddock, 1 Chips";
     	String order3 = "Order #3, 12:01:00, 21 Chips";
-    	
+    	String order4 = "Order #1, 12:00:00, 8 Chips";
+    	String order5 = "Order #2, 12:00:00, 8 Chips";
+    	String order6 = "Order #3, 12:00:00, 8 Chips";
+    	String order7 = "Order #4, 12:00:00, 8 Chips";
+    	String order8 = "Order #5, 12:02:00, 8 Chips";
+    	String order9 = "Order #6, 12:02:00, 8 Chips";
+    	String order10 = "Order #7, 12:08:00, 8 Chips";
+    	String order11 = "Order #8, 12:08:00, 8 Chips";
+
+
     	
     	List<String> strList = new ArrayList<String>();
-    	strList.add(order1);
-    	strList.add(order2);
-    	strList.add(order3);
-    	
+
+    	strList.add(order4);
+    	strList.add(order5);
+    	strList.add(order6);
+    	strList.add(order7);
+    	strList.add(order8);
+    	strList.add(order9);
+    	strList.add(order10);
+    	strList.add(order11);
     	
     	Solution solut = new Solution();
     	Processor processor = solut.new Processor();
@@ -1018,7 +1068,7 @@ public class Solution {
 //    		processor.addQueue(s);
 //    	}
     	
-//    	Thread.sleep(100000);
+    	Thread.sleep(100000);
 //    	processor.stop();
 //    	t.join();
     	
